@@ -1,4 +1,3 @@
-import logging
 from typing import Any
 
 from elasticsearch import Elasticsearch
@@ -73,11 +72,13 @@ class OpenSearchClient:
                 version=evaluation["old_qa"]["app_version"],
                 sources=evaluation["old_qa"].get("sources", []),
             )
-            evaluated_qa_pairs.append(EvaluatedQA(
-                replay_id=replay_id,
-                old_qa_pair=old_qa_pair,
-                new_qa_pair=new_qa_pair,
-                checks=checks,
-                errors=errors,
-            ))
+            evaluated_qa_pairs.append(
+                EvaluatedQA(
+                    replay_id=replay_id,
+                    old_qa_pair=old_qa_pair,
+                    new_qa_pair=new_qa_pair,
+                    checks=checks,
+                    errors=errors,
+                )
+            )
         return evaluated_qa_pairs

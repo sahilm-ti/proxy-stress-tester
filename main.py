@@ -1,18 +1,19 @@
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
-from dotenv import load_dotenv
 import requests
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 from logger import get_logger
 from opensearch_client import OpenSearchClient
-from schema import EvaluatedQA, QAPair
+from schema import EvaluatedQA
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+
+logging.getLogger().setLevel(logging.INFO)
 logger = get_logger(__name__)
 
 
@@ -47,13 +48,24 @@ def send_requests(
         query={"bool": {"must": [{"exists": {"field": "evaluation.replay_id"}}]}},
     )
     logger.info(f"Found {len(qa_pairs)} qa pairs.")
+
     def post(qa_pair: EvaluatedQA):
-        request_body = get_openai_request_body(qa_pair.old_qa_pair.question, qa_pair.old_qa_pair.answer, qa_pair.new_qa_pair.answer, model)
+        request_body = get_openai_request_body(
+            qa_pair.old_qa_pair.question,
+            qa_pair.old_qa_pair.answer,
+            qa_pair.new_qa_pair.answer,
+            model,
+        )
         request_headers = {
-            'callback-token': 'FAKE_TOKEN',
-            'Authorization': f'Bearer {openai_api_key}'
+            "callback-token": "FAKE_TOKEN",
+            "Authorization": f"Bearer {openai_api_key}",
         }
-        return requests.post(f"{proxy_base_endpoint}/chat/completions", json=request_body, headers=request_headers)
+        return requests.post(
+            f"{proxy_base_endpoint}/chat/completions",
+            json=request_body,
+            headers=request_headers,
+        )
+
     with ThreadPoolExecutor() as executor:
         responses = list(tqdm(executor.map(post, qa_pairs), total=len(qa_pairs)))
         for response in responses:
