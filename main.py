@@ -17,7 +17,7 @@ logging.getLogger().setLevel(logging.INFO)
 logger = get_logger(__name__)
 
 
-def get_openai_request_body(
+def get_similarity_request_body(
     question: str, old_answer: str, new_answer: str, openai_model: str
 ) -> dict:
     return {
@@ -36,6 +36,61 @@ def get_openai_request_body(
     }
 
 
+def get_conciseness_request_body(
+    question: str, old_answer: str, new_answer: str, openai_model: str
+) -> dict:
+    return {
+        "model": openai_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an AI assistant that compares two different answers to the same question. You are to compare the second answer against the first on the following criterion: how concise the answer is. Classify the content in second answer as compared to the first answer, with one of the following labels: more, less, unchanged. Your answer should be a JSON object with conciseness as the key and the label as the value.",
+            },
+            {
+                "role": "user",
+                "content": f"Question: {question}\nFirst answer: {old_answer}\nSecond answer: {new_answer}\n. Make sure your response is a json object with conciseness as the key.",
+            },
+        ],
+        "temperature": 1,
+    }
+
+
+def get_contains_code_request_body(
+    question: str, old_answer: str, new_answer: str, openai_model: str
+) -> dict:
+    return {
+        "model": openai_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": 'You are an AI assistant that evaluates answers to a question.\nYou are provided a question, old answer and a new answer.\nEvaluate whether the answer contains any code (programming language snippets, scripts, etc.).\nYour response should be a JSON object with two items:\n1. "old_answer_code" as the key and the value being either true or false.\n2. "new_answer_code" as the key and the value being either true or false.',
+            },
+            {
+                "role": "user",
+                "content": f'Question: {question}\nOld answer: {old_answer}\nNew answer: {new_answer}\n. Make sure your response is a json object with "old_answer_code" and "new_answer_code" as keys.',
+            },
+        ],
+        "temperature": 1,
+    }
+
+
+def prepare_requests(qa_pair: EvaluatedQA, model: str) -> list[dict]:
+    prompt_types = [
+        get_similarity_request_body,
+        get_conciseness_request_body,
+        get_contains_code_request_body,
+    ]
+    return [
+        f(
+            qa_pair.old_qa_pair.question,
+            qa_pair.old_qa_pair.answer,
+            qa_pair.new_qa_pair.answer,
+            model,
+        )
+        for f in prompt_types
+    ]
+
+
 def send_requests(
     size: int,
     model: str,
@@ -49,13 +104,7 @@ def send_requests(
     )
     logger.info(f"Found {len(qa_pairs)} qa pairs.")
 
-    def post(qa_pair: EvaluatedQA):
-        request_body = get_openai_request_body(
-            qa_pair.old_qa_pair.question,
-            qa_pair.old_qa_pair.answer,
-            qa_pair.new_qa_pair.answer,
-            model,
-        )
+    def post(request_body: dict) -> requests.Response:
         request_headers = {
             "callback-token": "FAKE_TOKEN",
             "Authorization": f"Bearer {openai_api_key}",
@@ -66,10 +115,19 @@ def send_requests(
             headers=request_headers,
         )
 
+    all_requests = []
+    for qa_pair in qa_pairs:
+        all_requests.extend(prepare_requests(qa_pair, model))
     with ThreadPoolExecutor() as executor:
-        responses = list(tqdm(executor.map(post, qa_pairs), total=len(qa_pairs)))
+        responses = list(
+            tqdm(executor.map(post, all_requests), total=len(all_requests))
+        )
         for response in responses:
-            logger.debug(f"Received status_code {response.status_code} from proxy")
+            logger.debug(f"Received status_codes {response.status_code} from proxy")
+            if response.status_code != 200:
+                logger.error(
+                    f"Received response ({response.status_code}): {response.json()} from proxy"
+                )
 
 
 def main():
