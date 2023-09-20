@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import random
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -17,6 +18,8 @@ load_dotenv()
 
 logging.getLogger().setLevel(logging.INFO)
 logger = get_logger(__name__)
+
+keys_used: dict[str, int] = {}
 
 
 def get_similarity_request_body(
@@ -96,7 +99,7 @@ def prepare_requests(qa_pair: EvaluatedQA, model: str) -> list[dict]:
 def send_requests(
     size: int,
     model: str,
-    openai_api_key: str,
+    openai_api_keys: list[str],
     opensearch_client: OpenSearchClient,
     proxy_base_endpoint,
 ) -> None:
@@ -119,6 +122,8 @@ def send_requests(
         stop_max_attempt_number=10,
     )
     def post(request_body: dict) -> requests.Response:
+        openai_api_key = random.choice(openai_api_keys)
+        keys_used[openai_api_key] = keys_used.get(openai_api_key, 0) + 1
         request_headers = {
             "callback-token": uuid.uuid4().hex[:8],
             "Authorization": f"Bearer {openai_api_key}",
@@ -159,7 +164,7 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    openai_api_key = os.environ["OPENAI_API_KEY"]
+    openai_api_keys = os.environ["OPENAI_API_KEY"].split(",")
     opensearch_project = os.environ["OPENSEARCH_PROJECT"]
     opensearch_username = os.environ["OPENSEARCH_USERNAME"]
     opensearch_password = os.environ["OPENSEARCH_PASSWORD"]
@@ -174,10 +179,11 @@ def main():
     send_requests(
         size=args.size,
         model=args.model,
-        openai_api_key=openai_api_key,
+        openai_api_keys=openai_api_keys,
         opensearch_client=client,
         proxy_base_endpoint=proxy_base_endpoint,
     )
+    print(keys_used)
 
 
 if __name__ == "__main__":
