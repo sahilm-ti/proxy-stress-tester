@@ -1,10 +1,12 @@
 import argparse
 import logging
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from dotenv import load_dotenv
+from retrying import retry
 from tqdm import tqdm
 
 from logger import get_logger
@@ -104,16 +106,31 @@ def send_requests(
     )
     logger.info(f"Found {len(qa_pairs)} qa pairs.")
 
+    def is_rate_limit_error(exception):
+        if "Too many requests" in str(exception):
+            print(f"Rate limit error, going to retry")
+            return True
+        return False
+
+    @retry(
+        retry_on_exception=is_rate_limit_error,
+        wait_random_min=15000,
+        wait_random_max=45000,
+        stop_max_attempt_number=10,
+    )
     def post(request_body: dict) -> requests.Response:
         request_headers = {
-            "callback-token": "FAKE_TOKEN",
+            "callback-token": uuid.uuid4().hex[:8],
             "Authorization": f"Bearer {openai_api_key}",
         }
-        return requests.post(
+        result = requests.post(
             f"{proxy_base_endpoint}/chat/completions",
             json=request_body,
             headers=request_headers,
         )
+        if result.status_code == 429:
+            raise Exception("Too many requests")
+        return result
 
     all_requests = []
     for qa_pair in qa_pairs:
@@ -126,7 +143,7 @@ def send_requests(
             logger.debug(f"Received status_codes {response.status_code} from proxy")
             if response.status_code != 200:
                 logger.error(
-                    f"Received response ({response.status_code}): {response.json()} from proxy"
+                    f"Received response ({response.status_code}): {response.text} from proxy"
                 )
 
 
