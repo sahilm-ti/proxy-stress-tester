@@ -3,7 +3,8 @@ import logging
 import os
 import random
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from time import perf_counter
 
 import requests
 from dotenv import load_dotenv
@@ -56,7 +57,7 @@ def get_conciseness_request_body(
                 "content": f"Question: {question}\nFirst answer: {old_answer}\nSecond answer: {new_answer}\n. Make sure your response is a json object with conciseness as the key.",
             },
         ],
-        "temperature": 1,
+        "temperature": 0.7,
     }
 
 
@@ -141,15 +142,20 @@ def send_requests(
     for qa_pair in qa_pairs:
         all_requests.extend(prepare_requests(qa_pair, model))
     with ThreadPoolExecutor() as executor:
-        responses = list(
-            tqdm(executor.map(post, all_requests), total=len(all_requests))
-        )
-        for response in responses:
-            logger.debug(f"Received status_codes {response.status_code} from proxy")
-            if response.status_code != 200:
-                logger.error(
-                    f"Received response ({response.status_code}): {response.text} from proxy"
-                )
+        futures = {executor.submit(post, req): req for req in all_requests}
+        progress_bar = tqdm(total=len(futures), desc="Processing requests")
+        for future in as_completed(futures):
+            progress_bar.update(1)
+            try:
+                response = future.result()
+                logger.debug(f"Received status_code {response.status_code} from proxy")
+                if response.status_code != 200:
+                    logger.error(
+                        f"Received response ({response.status_code}): {response.text} from proxy"
+                    )
+            except Exception as e:
+                logger.error(f"Exception occurred: {e}")
+        progress_bar.close()
 
 
 def main():
@@ -176,6 +182,7 @@ def main():
         password=opensearch_password,
     )
 
+    start_time = perf_counter()
     send_requests(
         size=args.size,
         model=args.model,
@@ -183,7 +190,9 @@ def main():
         opensearch_client=client,
         proxy_base_endpoint=proxy_base_endpoint,
     )
-    print(keys_used)
+    end_time = perf_counter()
+    logger.info(f"Total time taken: {end_time - start_time} seconds")
+    logger.info(f"Keys used: {keys_used}")
 
 
 if __name__ == "__main__":
